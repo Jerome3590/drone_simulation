@@ -1,0 +1,231 @@
+---
+title: "Patient Forecasts"
+author: "Jerome Dixon"
+date: "2022-09-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries}
+
+library(readr)
+library(here)
+library(DataExplorer)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(magrittr)
+library(stringi)
+library(ggplot2)
+library(xts)
+library(kableExtra)
+library(zoo)
+library(forecast)
+library(rEDM)
+library(zipcodeR)
+library(data.table)
+
+```
+
+```{r new-mexico-counties}
+
+
+pandemic_nm_counties <- read_delim(here("data","forecasts","nm_counties.csv"), delim = ";", escape_double = FALSE, trim_ws = TRUE)
+
+us_covid_community_levels_by_County <- read_csv(here("data","forecasts","United_States_COVID-19_Community_Levels_by_County.csv"))
+
+
+nm_covid_level_by_County <- us_covid_community_levels_by_County %>% 
+  filter(state == "New Mexico") %>% 
+  mutate(Date_Updated = mdy(date_updated)) %>% 
+  select(!date_updated) %>% 
+  filter(Date_Updated == max(Date_Updated)) %>% 
+  left_join(.,
+            pandemic_nm_counties,
+            by=c('county_fips'='Admin 2 FIPS Code')) %>% 
+  select(-3,-15,-16,-17) %>% 
+  distinct() %>% 
+  rename( location = `location,`) %>% 
+  separate(location, c("Lat","Long"), sep = ",")
+
+
+```
+
+```{r timeseries-data}
+
+bernalillo <- read_csv(here("data","forecasts","County","Bernalillo","bernalillo_ts.csv"), skip = 2)
+
+bernalillo <- bernalillo %>% 
+  select(12,4,1,15,5,9) %>% 
+  mutate(Date = mdy(Date)) 
+
+bernalillo_ts <- bernalillo %>% 
+  select(1,6) %>% 
+  mutate(Admissions = .[[2]])
+
+time_steps <- nrow(bernalillo_ts)
+
+horizon <- 21
+
+train_set <- time_steps - 15
+test_set <- train_set:time_steps
+
+time_steps
+train_set
+test_set
+
+```
+
+
+### Embedding Dimension
+
+```{r rho-e}
+
+rho_E <- EmbedDimension(dataFrame = bernalillo_ts, columns = "Admissions", target = "Admissions", lib = "1 958", pred = "958 973", showPlot = TRUE)
+
+rho_E
+
+```
+
+
+## Test Various Model Configurations
+
+```{r simplex-embedding-9}
+
+simplex_out9 <- Simplex(dataFrame = bernalillo_ts, lib = "1 958", pred = "958 973", columns = "Admissions", target = "Admissions", E = 9)
+
+ComputeError(simplex_out9 $ Predictions, simplex_out9 $ Observations)
+
+```
+
+
+```{r simplex-embedding-10}
+
+simplex_out10 <- Simplex(dataFrame = bernalillo_ts, lib = "1 958", pred = "958 973", columns = "Admissions", target = "Admissions", E = 10)
+
+ComputeError(simplex_out10 $ Predictions, simplex_out10 $ Observations)
+
+```
+
+
+```{r rho-theta-E5}
+
+simplex_out5 <- Simplex(dataFrame = bernalillo_ts, lib = "1 958", pred = "958 973", columns = "Admissions", target = "Admissions", E = 5)
+
+ComputeError(simplex_out5 $ Predictions, simplex_out5 $ Observations)
+
+```
+
+
+```{r rho-theta-E9}
+
+rho_E9 <- PredictNonlinear(dataFrame = bernalillo_ts, lib = "1 958", pred = "958 973", columns = "Admissions", target = "Admissions", E = 9)
+
+rho_E9
+
+```
+
+
+```{r smap-nonlinearity1}
+
+smap1 = SMap(dataFrame = bernalillo_ts, lib = "1 958", pred = "958 973", columns = "Admissions", target = "Admissions", E = 9, theta = 5)
+
+smap_df1 <- cbind(smap1$predictions, smap1$coefficients)
+
+ComputeError(smap_df1 $ Predictions, smap_df1 $ Observations)
+
+
+```
+
+
+```{r smap-nonlinearity2}
+
+smap2 = SMap(dataFrame = bernalillo_ts, lib = "1 958", pred = "959 973", columns = "Admissions", target = "Admissions", E = 10, theta = 5)
+
+smap_df2 <- cbind(smap2$predictions, smap2$coefficients)
+
+ComputeError(smap_df2 $ Predictions, smap_df2 $ Observations)
+
+
+```
+
+
+```{r smap-nonlinearity3}
+
+smap3 = SMap(dataFrame = bernalillo_ts, lib = "1 958", pred = "958 973", columns = "Admissions", target = "Admissions", E = 5, theta = 5)
+
+smap_df3 <- cbind(smap3$predictions, smap3$coefficients)
+
+ComputeError(smap_df3 $ Predictions, smap_df3 $ Observations)
+
+
+```
+
+
+```{r smap2-forecast}
+
+observations = smap_df2$Observations[1:15]
+predictions = smap_df2$Predictions[2:16]
+Time = c(1:15)
+
+
+plot(Time, observations, type = "l", col = "blue", ylab = "Admissions / Day", xlab = "Day # Admission Forecast-SMAP2",
+lwd = 2, cex.lab = 1.3, cex.axis = 1.3)
+
+lines(Time, predictions, lwd = 2, col = "red")
+legend("topright", legend = c("observed", "predicted"), fill = c("blue", "red"),
+bty = "n", cex = 1.3)
+
+```
+
+
+```{r}
+
+ts_df <- data.frame(Time, Prediction = round(predictions,0))
+
+```
+
+
+
+```{r zip-plus-four}
+
+zip_plus_four <- fread(here("data","zip_codes","nm.txt"))
+
+zip_plus_four <- zip_plus_four %>% 
+  select(8,9,1,2,28) %>% 
+  unite("Address", 1:4, remove= FALSE, sep = ' ') %>% 
+  unite("Zip+4", 4:5, remove= FALSE, sep = '-') %>% 
+  select(4,1,7)
+
+write_csv(zip_plus_four, here("data","geocode","input","zip_plus4.csv"))
+
+
+```
+
+
+```{r geocoded-county-addresses}
+
+zip_plus4_geocodio <- read_csv("data/geocode/output/zip_plus4_geocodio.csv")
+
+```
+
+
+```{r}
+
+set.seed(1997)  
+
+county1_count <- round(sum(predictions),0)
+
+county1_clients <- zip_plus4_geocodio %>% 
+  filter(CountyFIPS == 35001) %>% 
+  slice_sample(n = county1_count)
+
+
+
+```
+
+
+

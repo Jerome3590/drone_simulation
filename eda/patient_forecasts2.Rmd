@@ -1,0 +1,75 @@
+---
+title: "Patient Forecasts"
+author: "Jerome Dixon"
+date: "2022-09-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries}
+
+library(readr)
+library(here)
+library(DataExplorer)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(magrittr)
+library(stringi)
+library(ggplot2)
+library(xts)
+library(kableExtra)
+library(zoo)
+library(forecast)
+library(rEDM)
+library(zipcodeR)
+library(data.table)
+
+```
+
+```{r new-mexico-counties}
+
+
+pandemic_nm_counties <- read_delim(here("data","forecasts","coronavirus-covid-19-pandemic-usa-counties.csv"), delim = ";", escape_double = FALSE, trim_ws = TRUE)
+
+us_covid_community_levels_by_County <- read_csv(here("data","forecasts","United_States_COVID-19_Community_Levels_by_County.csv"))
+
+
+nm_covid_level_by_County <- us_covid_community_levels_by_County %>% 
+  filter(state == "New Mexico") %>% 
+  mutate(Date_Updated = mdy(date_updated)) %>% 
+  select(!date_updated) %>% 
+  filter(Date_Updated == max(Date_Updated))
+
+
+```
+
+```{r timeseries-data}
+
+bernalillo_ts <- read_csv(here("data","forecasts","County","bernalillo_ts.csv"), skip = 2)
+
+bernalillo_ts <- bernalillo_ts %>% 
+  select(12,4,1,15,5,9) %>% 
+  mutate(Date = mdy(Date)) 
+
+
+```
+
+```{r zip-plus-four}
+
+zip_plus_four <- fread(here("data","zip_codes","nm.txt"))
+
+zip_plus_four <- zip_plus_four %>% 
+  select(8,9,1,2,28) %>% 
+  unite("Address", 1:4, remove= FALSE, sep = ' ') %>% 
+  unite("Zip+4", 4:5, remove= FALSE, sep = '-') %>% 
+  select(4,1,7)
+
+write_csv(zip_plus_four, here("data","geocode","input","zip_plus4.csv"))
+
+
+```
+

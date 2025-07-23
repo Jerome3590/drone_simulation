@@ -1,0 +1,258 @@
+---
+title: "COVID-19 Telehealth Kit/5G Simulation"
+author: "Jerome Dixon"
+date: "2022-09-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, echo=FALSE, message=FALSE}
+
+library(data.table)
+library(simmer)
+library(simmer.bricks)
+library(simmer.plot)
+library(dplyr)
+library(lubridate)
+library(magrittr)
+library(tidyr)
+library(readr)
+library(aws.s3)
+library(aws.signature)
+library(stringr)
+
+```
+
+
+### **Simulation....**
+
+
+```{r actuals}
+
+
+actuals_ds <- s3read_using(FUN=read.csv, object="s3://irad-2201-scenario-modeling/simulation/hospitalizations/hospitalizations.csv",sep = ",",stringsAsFactors = F, header=T)
+
+actuals_ds %<>% 
+  filter(!covid_cases == 0) 
+
+actuals_ds %<>% 
+  mutate(date_reported = ymd_hms(date_reported),
+        time = as.numeric(rownames(actuals_ds)))
+
+
+SIM_TIME <- actuals_ds[1:sim_time, ]
+
+# Simulation Time: 52 weeks
+SimTime = nrow(SIM_TIME)
+
+```
+
+
+```{r scenario-setup}
+
+# Lookup Tables
+# Patient Attributes
+patient_attributes <- s3read_using(FUN=read.csv, object="s3://irad-2201-scenario-modeling/simulation/patient-attributes/patient_attributes.csv",sep = ",",stringsAsFactors = F, header=T)
+
+
+# EPA Smart City Location Attributes
+nm_epa <- s3read_using(FUN=read.csv, object="s3://irad-2201-scenario-modeling/simulation/epa/epa.csv",sep = ",",stringsAsFactors = F, header=T)
+
+
+# Patient Demographics Attributes
+ages <- c(30:105)
+age <- function(){return(sample(ages, size=1, replace=F))}
+gender <- function(){return(sample.int(3,1, replace = F, c(.5,.45,.05)))}
+race <- function(){return(sample.int(5,1, replace=F, c(.4,.3,.15,.1,.05)))}
+
+
+# Insurance Attributes
+insurance_policies <- c("Medicare/Medicaid","Medicaid:Blue Cross/Blue Shield","Medicaid:Centennial Care","Western Sky","Blue Cross/Blue Shield",
+"Centennial Care","Western Sky/Ambetter","Tricare","Friday Health Plans","Molina Healthcare","Presbyterian","True Health")
+
+insurance <- function(){return(sample.int(12,1, replace=FALSE))}
+
+
+# Patient Behavior Attributes
+behavior <- c("Church","Funeral","Wedding","Sporting Event","Other", "NA")
+patient_behavior <- function(){return(sample.int(6,1, replace=F, c(.1,.1,.1,.1,.1,.5)))}
+
+
+#Travel Attributes
+travel <- function(){return(sample.int(2,1, replace = F, c(.2,.8)))}
+
+travel_covid_hotspot <- function(){return(sample.int(2,1, replace = F, c(.5,.5)))}
+
+#travel_modes <- c("Train","Air","Car","Bus","Ship","NA")
+travel_mode <- function(){return(sample.int(6,1, replace=F, c(.1,.2,.4,.2,.05,.05)))}
+
+
+#Patient Attributes
+#Patient_Lat, Patient_Long, Closest_Hospital, Hospital_Lat, Hospital_Long, #Beds_Available
+patient <- function(){
+  patient_attributes %>% 
+  dplyr::select(5,6,10,15,16,17) %>% 
+  slice_sample() %>% 
+  as.numeric()
+}
+
+
+# Smart City EPA Attributes
+# Road_Network_Density(D3a), Transit_Access(D4a), Walkability_Index
+epa <- function(){
+  nm_epa%>% 
+  dplyr::select(5:7) %>% 
+  slice_sample() %>% 
+  as.numeric()
+ 
+}
+
+
+#Scenario Hot Spots and Location Attributes
+hot_spots <- patient_attributes[c(5,6)]%>% 
+  unique() %>% 
+  slice_sample(n=6) 
+
+
+hot_spot <- function(){
+  hot_spots %>% 
+    slice_sample() %>% 
+    as.numeric()
+}
+
+
+# Simulation Parameters
+scheduling <- function() {.014}
+inpatient_cost <- function() {98336}
+telehealth_kit_cost <- function() {600}
+
+
+hospitalized <- function() {runif(1,7,14)}
+routing = function() {return(sample.int(2,1, replace = T, c(.4,.6)))}
+drone_flight_time <- function(){runif(1,.5,1)}
+
+
+```
+
+
+```{r}
+
+library(simmer)
+
+set.seed(1997)
+
+
+# - param[["drones_n"]] is the number of drones in scenario
+# - param[["sim_time"]] is the simulation time 
+
+simulate <- function(param) {
+  
+  SIM_TIME <- actuals_ds[1:sim_time, ]
+
+  # Simulation Time: 52 weeks
+  SimTime = nrow(SIM_TIME)
+  
+  # Patient Arrival Batches (Actual History)
+  groups <- SIM_TIME$potential_telehealth
+  
+  env <- simmer("telehealth clinic")
+
+  beds <- paste0("bed", 1:15)
+  drones <- paste0("drone", 1:drones_n)
+  health_help_desk <- paste0("health_help_desk", 1:2)
+
+  env %>% 
+  add_resource(health_help_desk, capacity = 5, mon = TRUE) %>% 
+  add_resource(drones, capacity = 30, mon = TRUE) %>% 
+  add_resource(beds, capacity = 1, mon = TRUE) 
+  
+
+  bed.traj <- trajectory(name = "Inpatient-Monitoring", verbose= T)  %>%
+  timeout(scheduling) %>%
+  simmer::select(beds, "first-available") %>%
+  seize_selected(1) %>%
+  set_attribute("Cost", inpatient_cost) %>% 
+  timeout(hospitalized) %>%
+  release_selected(1)
+
+
+  drone.traj <- trajectory(name = "At-Home-Monitoring", verbose= T) %>%
+  timeout(scheduling) %>%
+  simmer::select(drones, "first-available") %>%
+  seize_selected(1) %>% 
+  set_attribute("Cost", telehealth_kit_cost) %>% 
+  timeout(drone_flight_time) %>%
+  release_selected(1)
+
+
+  patient.traj <- trajectory(name = "Patient-Path", verbose= T) %>% 
+  simmer::select(health_help_desk, "first-available") %>%
+  seize_selected(1) %>% 
+  timeout(scheduling) %>% 
+  set_attribute("Age", age) %>%
+  set_attribute("Gender", gender) %>%
+  set_attribute("Patient_Behavior", patient_behavior) %>%
+  set_attribute("Insurance", insurance) %>%
+  set_attribute(c("Patient_Lat", "Patient_Long", "Closest_Hospital", "Hospital_Lat", "Hospital_Long", "#Beds_Available"), patient) %>%
+  set_attribute(c("Transportaton_Density", "Transportations_Access", "Walkability_Index"), epa) %>%
+  set_attribute("Behavior", patient_behavior) %>%
+  set_attribute("Travel", travel) %>%
+  set_attribute("COVID_Hotspot", travel_covid_hotspot) %>%
+  set_attribute("Travel_Mode", function()ifelse(get_attribute(env, "Travel") == 2, travel_mode(),0)) %>% 
+  release_selected(1) %>% 
+  set_attribute("Route", routing) %>%
+  branch(function(){get_attribute(env,"Route")},
+         continue = rep(FALSE,2),
+    bed.traj,
+    drone.traj
+  )
+
+
+  for (i in 1:length(groups))
+  env %>% 
+  add_generator(paste0("COVID_Cases_Day_", i), trajectory=patient.traj,
+                mon=2, function(){c(0, rexp(groups[i], 1/10), -1)})
+  
+  env %>% 
+  run(until = sim_time) %>% 
+  wrap()
+}
+
+# grid of scenarios
+cases <- expand.grid(drones_n = c(2, 4, 6, 8), sim_time = c(12, 24, 36, 52))
+
+# parallel simulation
+system.time({
+  envs <- parallel::mclapply(split(cases, 1:nrow(cases)), simulate,
+                             mc.cores=nrow(cases), mc.set.seed=FALSE)
+})
+
+```
+
+
+```{r Visualize Scenario}
+
+bp.vals <- function(x, probs=c(0.05, 0.25, 0.5, 0.75, 0.95)) {
+  r <- quantile(x, probs=probs, na.rm=TRUE)
+  names(r) <- c("ymin", "lower", "middle", "upper", "ymax")
+  r
+}
+
+envs %>%
+  get_mon_attributes() %>%
+  group_by(replication, name) %>%
+  summarise(dE = sum(c(0, head(value, -1) * diff(time)))) %>%
+  left_join(rowid_to_column(cases, "replication")) %>%
+  # plot
+  ggplot(aes(factor(drones_n), dE*tx_period/Tsim, color=factor(backoff))) +
+  stat_summary(fun.data=bp.vals, geom="boxplot", position="dodge") +
+  theme_bw() + theme(legend.justification=c(0, 1), legend.position=c(.02, .98)) +
+  labs(y="Patients", x="No. of Drones", color="Backoff window [s]")
+
+
+```
+
+

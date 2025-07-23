@@ -1,0 +1,204 @@
+---
+title: "IRAD Scenario Modeling Data Visualizations"
+format:
+  html:
+    toc: true
+    df-print: paged
+    fontsize: "11pt"
+knitr:
+  opts_chunk: 
+    echo: false
+    out.width: "60%"
+---
+
+```{r libraries-theme, include=FALSE, message=FALSE, warning=FALSE}
+
+library(tidyverse)
+library(here)
+library(data.table)
+library(simmer)
+library(simmer.bricks)
+library(simmer.plot)
+library(dplyr)
+library(lubridate)
+library(magrittr)
+library(tidyr)
+library(readr)
+library(aws.s3)
+library(aws.signature)
+library(stringr)
+library(tidyverse)
+library(here)
+
+theme_set(theme_bw())
+
+```
+
+### Simulation Output
+ - 60 Scenarios (nested list format)
+ 
+ ![Scenario Output](images/model_runs.png)
+<br>
+
+- Each scenario exploded out contains event arrival time, resource metrics, and tracked data attributes
+
+![Scenario Output Exploded](images/model_run_exploded.png)
+
+<br>
+
+```{r load-simulation-output-data}
+
+
+
+```
+
+
+### Key Performance Indicators (KPIs)
+ - Inpatient Cost vs Outpatient Cost
+ - # Patients in service queue
+ - Hospital bed capacity
+
+```{r box-plot, warning=FALSE, message=FALSE}
+
+bp.vals <- function(x, probs=c(0.05, 0.25, 0.5, 0.75, 0.95)) {
+  r <- quantile(x, probs=probs, na.rm=TRUE)
+  names(r) <- c("ymin", "lower", "middle", "upper", "ymax")
+  r
+}
+
+envs %>%
+  get_mon_attributes() %>%
+  group_by(replication, name) %>%
+  summarise(dP = sum(c(0, head(value, -1) * diff(time)))) %>%
+  left_join(rowid_to_column(cases, "replication")) %>%
+  # plot
+  ggplot(aes(factor(`supply_drones_n`), dP*sim_time/7, color=factor(sim_time))) +
+  stat_summary(fun.data=bp.vals, geom="boxplot", position="dodge") +
+  theme_bw() + theme(legend.justification=c(0, 1), legend.position=c(.02, .98)) +
+  labs(y="COVID Patients", x="No. of Drones Delivering Telehealth Monitoring Kits", color="Simulation Time in Weeks")
+
+```
+
+
+
+```{r facet-by-grouping-variable, warning=FALSE, message=FALSE}
+
+bp.vals <- function(x, probs=c(0.05, 0.25, 0.5, 0.75, 0.95)) {
+  r <- quantile(x, probs=probs, na.rm=TRUE)
+  names(r) <- c("ymin", "lower", "middle", "upper", "ymax")
+  r
+}
+
+envs %>%
+  get_mon_attributes() %>%
+  group_by(replication, name) %>%
+  summarise(dP = sum(c(0, head(value, -1) * diff(time)))) %>%
+  left_join(rowid_to_column(cases, "replication")) %>%
+  # plot
+  ggplot(aes(factor(`supply_drones_n`), dP*sim_time/7, color=factor(sim_time))) +
+  stat_summary(fun.data=bp.vals, geom="boxplot", position="dodge") +
+  theme_bw() + theme(legend.justification=c(0, 1), legend.position=c(.02, .98)) +
+  labs(y="COVID Patients", x="No. of Drones Delivering Telehealth Monitoring Kits", color="Simulation Time in Weeks")
+
+```
+
+
+
+```{r heat-map, warning=FALSE, message=FALSE}
+
+bp.vals <- function(x, probs=c(0.05, 0.25, 0.5, 0.75, 0.95)) {
+  r <- quantile(x, probs=probs, na.rm=TRUE)
+  names(r) <- c("ymin", "lower", "middle", "upper", "ymax")
+  r
+}
+
+envs %>%
+  get_mon_attributes() %>%
+  group_by(replication, name) %>%
+  summarise(dP = sum(c(0, head(value, -1) * diff(time)))) %>%
+  left_join(rowid_to_column(cases, "replication")) %>%
+  # plot
+  ggplot(aes(factor(`supply_drones_n`), dP*sim_time/7, color=factor(sim_time))) +
+  stat_summary(fun.data=bp.vals, geom="boxplot", position="dodge") +
+  theme_bw() + theme(legend.justification=c(0, 1), legend.position=c(.02, .98)) +
+  labs(y="COVID Patients", x="No. of Drones Delivering Telehealth Monitoring Kits", color="Simulation Time in Weeks")
+
+```
+
+
+```{r line-charts, warning=FALSE, message=FALSE}
+
+Troponin_CI %>% 
+  ggplot(aes(mean, OPO_Group, color=OPO_Group)) +
+  geom_point(aes(size=n)) + 
+  geom_linerange(aes(xmin=lower, xmax=upper)) + 
+  labs(x = "Mean peak TROPONIN level")
+
+```
+
+```{r}
+Troponin_CI
+
+```
+
+
+```{r bar-charts, warning=FALSE, message=FALSE}
+
+# Two - Three Scenarios
+
+
+
+```
+
+
+```{r box-plots, warning=FALSE, message=TRUE}
+
+# Two - Three Scenarios
+
+INO_count_CI %>% 
+  ggplot(aes(mean, OPO_Group, color=OPO_Group)) +
+  geom_point(aes(size=n)) + 
+  geom_linerange(aes(xmin=lower, xmax=upper)) + 
+  labs(x = "Mean max inotrope count")
+
+
+```
+
+```{r}
+INO_count_CI
+```
+
+
+```{r facet-charts, warning=FALSE, message=FALSE}
+
+# Four - Sixteen Scenarios
+
+ggplot(titanic, aes(x = Age, fill = Survived)) +
+  theme_bw() +
+  facet_wrap(Sex ~ Pclass) +
+  geom_density(alpha = 0.5) +
+  labs(y = "Age",
+       x = "Survived",
+       title = "Titanic Survival Rates by Age, Pclass and Sex")
+
+
+
+```
+
+
+```{r dendrogram-heatmap, warning=FALSE, message=FALSE}
+
+# Greater than Sixteen Scenarios - High Dimensionality
+
+
+
+```
+
+
+```{r animation, warning=FALSE, message=FALSE}
+
+# Greater than Sixteen Scenarios - Low Dimensionality
+
+
+
+```

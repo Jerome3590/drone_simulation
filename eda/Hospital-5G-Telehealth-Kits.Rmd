@@ -1,0 +1,373 @@
+---
+title: "Hospital 5G Telehealth Kits"
+author: "Jerome Dixon"
+date: "2022-07-31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = FALSE, warning=FALSE, message=FALSE, eval = TRUE, echo = TRUE)
+```
+
+
+![](images/abq-hospitals.png)
+<br>
+
+### Alburqurque, NM over capacity for hospital beds
+### Would like to establish 5G telehealth networks in flare areas 
+### Telehealth kits consist of 1 5G router, HRV sleep sensor, apple watch, 5G camera, and other wearables as prescribed (approx weight = 25 lbs)
+### Intermediate 5G antennaes/relay stations will be place alongside utilities network (ie. electric/telephone poles) via automobile.
+
+<br>
+
+```{r}
+
+library(tibble)
+library(tidyverse)
+library(here)
+library(deSolve)
+library(growthrates)
+library(magrittr)
+library(kableExtra)
+
+```
+
+### CVN Logistics Model
+
+```{r cvn-logistics}
+
+
+cvn_logistics <- function(number_of_cvns, number_of_months_on_station){
+  
+  month <- 20000 * 4 * number_of_cvns
+
+  cvn_cargo <- list()
+
+  for (i in 1:(30*number_of_months_on_station)) {
+   
+  cvn_cargo[i] <- month/30
+  
+  }  
+    
+
+  cvn_air_log <- as_tibble(t(cvn_cargo),.name_repair) |> 
+    gather() |> 
+    select(value) |> 
+    mutate(CVN_Cumulative = cumsum(value)) |> 
+    rename(CVN_Daily = value)
+  
+}
+
+```
+
+
+```{r cvn-model}
+
+nag_cvn <- cvn_logistics(1,6)
+
+```
+
+
+```{r cvn-model-schema-step1}
+
+nag_cvn %>% 
+  head(10) %>% 
+  kbl() %>% 
+  kable_paper("striped", full_width=F, font_size=10) 
+
+```
+
+
+```{r ffg_ddg-logistics}
+
+ffg_ddg_logistics <- function(number_of_ffg_ddg, number_of_months_on_station){
+  
+  month <- 2500 * 4 * number_of_ffg_ddg
+
+  ffg_ddg_cargo <- list()
+  
+  for (i in 1:(30*number_of_months_on_station)) {
+     
+    ffg_ddg_cargo[i] <- month/30
+    
+  }
+
+
+  ffg_ddg_log <- as_tibble(t(ffg_ddg_cargo),.name_repair) |> 
+    gather() |> 
+    select(value) |> 
+    mutate(FFG_DDG_Cumulative = cumsum(value)) |> 
+    rename(FFG_DDG_Daily = value)
+}
+
+
+```
+
+
+```{r ffg-model}
+
+nag_ffg_ddg <- ffg_ddg_logistics(2,3)
+
+```
+
+
+```{r ffg_ddg-model-schema-step1}
+
+nag_ffg_ddg %>% 
+  head(10) %>% 
+  kbl() %>% 
+  kable_paper("striped", full_width=F, font_size=10) 
+
+
+```
+<br>
+
+### UAV Scenario
+
+The Chaparral is expected to be able to carry between 300 and 500 pounds of cargo on trips of up to 300 miles. The aircraft will not only be operated autonomously in flight, but all loading and unloading operations will be fully autonomous as well.
+
+![](BristowRender_2200x1080.jpg)
+
+[Article](https://www.futureflight.aero/news-article/2022-07-12/bristow-commits-ordering-100-chaparral-vtol-freighters-elroy-air)
+
+<br>
+
+### Parameters
+
+```{r uav-impact-factors}
+
+# Constraints
+uav_range = 300
+uav_speed = 5
+uav_cargo_capacity = 500
+
+
+# Variables
+weather_delay = 2
+ship_distance = 100
+trip_number = 2
+number_uav = 5
+
+
+# Outputs/KPIs
+time_to_complete = 24
+cargo_delivery_rate = 300/1
+cargo_queing_rate = 300/1
+cargo_performance = cargo_delivery_rate/cargo_queing_rate
+
+```
+
+<br>
+
+
+### UAV Air Logistics Stock and Flow SD Model
+
+![](uav_logistics_sd_model.png)
+<br>
+
+### CVN Delivery Model
+
+```{r cvn-final-model}
+
+nag_cvn %<>%
+  mutate( trip_number = trip_number,
+          number_uav = number_uav,
+          cargo_capacity = trip_number * number_uav * 500,
+          cargo_cumulative = cumsum(cargo_capacity),
+          transit_time = ship_distance / uav_speed,
+          time_on_deck = trip_number * 1.5,
+          total_transit_time = transit_time *2 + time_on_deck
+          )
+
+
+```
+
+### Model Schema
+
+```{r cvn-model-schema-step2}   
+
+nag_cvn %>% 
+  head(10) %>% 
+  kbl() %>% 
+  kable_paper("striped", full_width=F, font_size=10) 
+
+
+```
+
+### Growth Rate - Inbound Material
+
+```{r cvn-growth-model-beach-det}
+
+arrival_rate <- function(df){
+  if (ship_distance < uav_range){
+    fit <- fit_easylinear(rownames(nag_cvn), nag_cvn$CVN_Cumulative)
+    arrival_rate <- fit@par[["mumax"]] } else
+      "Not Supported"
+}
+
+ar <- arrival_rate(nag_cvn)
+
+ar
+
+```
+
+### Growth Rate - Delivered Material
+
+```{r cvn-growth-model-received}
+
+delivery_rate <- function(df){
+  if (ship_distance < uav_range){
+    fit <- fit_easylinear(rownames(nag_cvn), nag_cvn$cargo_cumulative)
+    delivery_rate <- fit@par[["mumax"]] / weather_delay } else
+      "Not Supported"
+}
+
+dr <- delivery_rate(nag_cvn)
+
+dr
+
+```
+
+### Simulation
+
+```{r cvn-simulation}
+
+simtime <- seq(1, 180, 1)
+
+stocks <- c(sCTF53=5000)
+auxs <- c(aGrowthRate=ar, aDeliveryRate=dr)
+
+model <- function(time, stocks, auxs){
+  with(as.list(c(stocks, auxs)),{
+    
+    fCargoInbound <- sCTF53 * aGrowthRate
+    
+    fCargoOutbound <- sCTF53 * aDeliveryRate
+    
+    dC_dt <- fCargoInbound - fCargoOutbound
+    
+    return (list(c(dC_dt),
+                 Ship=fCargoInbound, CTF53=fCargoOutbound,
+                 GR=aGrowthRate, DR=aDeliveryRate))
+    
+  })
+}
+
+
+o_cvn <- data.frame(ode(y=stocks, times=simtime, func = model, parms = auxs, method="euler"))
+
+```
+
+### Simulation Output
+
+```{r cvn-simulation-schema}
+
+o_cvn %>% 
+  head(10) %>% 
+  kbl() %>% 
+  kable_paper("striped", full_width=F, font_size=10) 
+
+```
+
+
+### Repeat for FFG|DDG
+
+```{r ffg_ddg-final-model}
+
+nag_ffg_ddg %<>%
+  mutate( trip_number = trip_number,
+          number_uav = number_uav,
+          cargo_capacity = trip_number * number_uav * 500,
+          cargo_cumulative = cumsum(cargo_capacity),
+          transit_time = ship_distance / uav_speed,
+          time_on_deck = trip_number * 1.5,
+          total_transit_time = transit_time *2 + time_on_deck)
+
+
+```
+
+
+```{r ffg_ddg-model-schema-step2}
+
+nag_cvn %>% 
+  head(10) %>% 
+  kbl() %>% 
+  kable_paper("striped", full_width=F, font_size=10) 
+
+```
+
+
+```{r ffg_ddg-growth-model-beach-det}
+
+
+arrival_rate2 <- function(df){
+  if (ship_distance < uav_range){
+    fit <- fit_easylinear(rownames(nag_ffg_ddg), nag_ffg_ddg$FFG_DDG_Cumulative)
+    arrival_rate <- fit@par[["mumax"]] } else
+      "Not Supported"
+}
+
+ar2 <- arrival_rate2(nag_ffg_ddg)
+
+ar2
+
+```
+
+
+```{r ffg_ddg-growth-model-received}
+
+delivery_rate2 <- function(df){
+  if (ship_distance < uav_range){
+    fit <- fit_easylinear(rownames(nag_ffg_ddg), nag_ffg_ddg$cargo_cumulative)
+    delivery_rate <- fit@par[["mumax"]] / weather_delay } else
+      "Not Supported"
+}
+
+dr2 <- delivery_rate2(nag_ffg_ddg)
+
+dr2
+
+```
+
+
+```{r ffg_ddg-simulation}
+
+simtime <- seq(1, 180, 1)
+
+stocks <- c(sCTF53=1000)
+auxs <- c(aGrowthRate=ar2, aDeliveryRate=dr2)
+
+model <- function(time, stocks, auxs){
+  with(as.list(c(stocks, auxs)),{
+    
+    fCargoInbound <- sCTF53 * aGrowthRate
+    
+    fCargoOutbound <- sCTF53 * aDeliveryRate
+    
+    dC_dt <- fCargoInbound - fCargoOutbound
+    
+    return (list(c(dC_dt),
+                 Ship=fCargoInbound, CTF53=fCargoOutbound,
+                 GR=aGrowthRate, DR=aDeliveryRate))
+    
+  })
+}
+
+
+o_ffg_ddg <- data.frame(ode(y=stocks, times=simtime, func = model, parms = auxs, method="euler"))
+
+```
+
+
+```{r ffg_ddg-simulation-schema}
+
+o_ffg_ddg %>% 
+  head(10) %>% 
+  kbl() %>% 
+  kable_paper("striped", full_width=F, font_size=10) 
+
+```
+
+
+
+

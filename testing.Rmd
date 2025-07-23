@@ -1,0 +1,42 @@
+---
+title: "Testing"
+author: "Jerome Dixon"
+date: "2022-10-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+library(simmer)
+library(parallel)
+
+customer <-
+  trajectory("Customer's path") %>%
+  seize("counter") %>%
+  timeout(function() {rexp(1, 1/12)}) %>%
+  release("counter")
+
+mclapply(c(393943, 100005, 777999555, 319999772), function(the_seed) {
+  set.seed(the_seed)
+
+  bank <-
+    simmer("bank") %>%
+    add_resource("counter", 2) %>%
+    add_generator("Customer", customer, function() {c(0, rexp(49, 1/10), -1)})
+
+  bank %>% run(until = 400)
+  result <-
+    bank %>%
+    get_mon_arrivals() %>%
+    transform(waiting_time = end_time - start_time - activity_time)
+  paste("Average wait for ", sum(result$finished), " completions was ",
+        mean(result$waiting_time), "minutes.")
+}) %>% unlist()
+
+
+```
+

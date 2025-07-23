@@ -1,0 +1,498 @@
+---
+title: "COVID-19 Telehealth: New Mexico Case Study"
+format:
+  html:
+    toc: true
+    df-print: paged
+    fontsize: "11pt"
+    embed-resources: true
+knitr:
+  opts_chunk: 
+    echo: false
+    message: false
+    warning: false
+    out.width: "80%"
+    html-math-method: katex
+"
+---
+
+```{r libraries, echo=FALSE, message=FALSE}
+
+library(data.table)
+library(simmer)
+library(simmer.bricks)
+library(simmer.plot)
+library(dplyr)
+library(lubridate)
+library(magrittr)
+library(tidyr)
+library(readr)
+library(aws.s3)
+library(aws.signature)
+library(stringr)
+library(tidyverse)
+library(googledrive)
+library(here)
+library(progress)
+
+```
+
+<br>
+
+<hr/>
+
+### **COVID Symptom LifeCycle and Hot Spots** 
+**- New Mexico hospitals are at capacity for available beds**
+
+<br>
+
+![](images/Slide1.png)
+
+<hr/>
+
+
+### COSINUSS^o^ COVID-19 Sensor
+
+![](images/cosinuss2.png)
+[STUDY:Telecovid-Remote Patient Monitoring for COVID-19](https://www.cosinuss.com/en/portfolio-items/study-on-remote-patient-monitoring-for-covid-19/)
+
+
+<hr/>
+
+### EMFIT Sleep Sensor
+
+![](images/EMFIT-QS-Care2-tuote-2.png)
+[EMFIT Clinical Publications](https://us.emfit.com/publications/)
+
+<hr />
+
+### Cargo Drone: Elroy Air "The Chaparral"
+
+![](images/BristowRender_2200x1080.jpg)
+[Fedex and Elroy Air](https://newsroom.fedex.com/newsroom/global/elroyair)
+
+<hr />
+
+### 5G Drone - HAPSMobile "Hawk 30"
+
+The HAWK30 is an unmanned, low-speed, high-altitude, solar-powered aircraft which is propelled by 10 electric fans and has been designed to carry 56 communications relays. Designed to operate for up to six months on a single flight.
+
+
+![](images/hawk30.jpeg)
+<br>
+[5G Drones Take to The Skies](https://www.5gradar.com/news/5g-drones-take-to-the-skies)
+
+<hr />
+
+<br>
+
+### AWS IoT Analytics
+AWS IoT analytics: 50.00/month
+[AWS IoT Pricing](https://aws.amazon.com/iot-analytics/pricing/)
+![](images/aws_iot_pricing1.png)
+
+<br>
+
+<hr />
+
+### Poor 5G Coverage Zones - 42 Clusters
+![](images/drone_clusters.png)
+
+Each HAWK30 can provide continuous service covering 150 square miles of land. Two (2) HAWK30 drones are enough to cover the state of New Mexico for continuous 5G coverage.
+
+<br>
+
+<hr />
+
+### **Proposed Solution to Mitigate Need for Beds and Free Up Hospital Resources**
+
+<br>
+
+![](images/Slide2.png)
+
+<br>
+
+The average cost for a COVID-19 hospitalization varies by state.
+[Average charge for COVID-19 hospitalization, by state](https://www.beckershospitalreview.com/finance/average-charge-for-covid-19-hospitalization-by-state.html)
+
+Costs are defined as "Complex" - requiring ICU or ventilator or as "Noncomplex" - not requiring ICU or ventilator.
+
+For New Mexico these costs are:
+- Complex: $272,593
+- Noncomplex: $98,336
+
+
+Telehealth Remote Monitoring Overhead:
+Elroy Air's pre-production Chaparral vehicle: the first end-to-end autonomous vertical take-off and landing (VTOL) aerial cargo system, designed for aerial transport of 300-500 lbs of goods over a 300 mile range. 1 A/C can make 30 deliveries depending on range/proximity of patients
+
+HAWK 30 5G pre-production aircraft. Estimate 2 A/C for a 150 mile coverage area over six months
+
+Initial estimate is 50K per month for each UAV Drone Type
+
+For Sensors/IoT Analytics:
+5G for (100) people without any network service -
+100 SIM cards, Private 5G Network Plus AWS Snowball for 60 Days:
+11,250 *2 + 14,400 = 36,900
+
+(no at home monitoring via provided internet)
+AWS 5G/IoT Analytics: 3,690.00 per person 
+emfit QS sensor: 250.00
+cosinuss° Two: 300.00
+
+<br>
+<hr />
+
+### **How Many Drones and Sensor Kits Do We Need to Implement COVID-19 At-Home Monitoring for New Mexico**
+
+<br>
+
+![](images/NM_COVID19_Dashboard.png)
+
+
+### New Mexico COVID-19 Dashboard
+[New Mexico COVID-19 Dashbboard](https://cvprovider.nmhealth.org/public-dashboard.html)
+
+
+<hr />
+
+
+#### New Mexico Source Data
+[Webscraping Demo- Thanks Dan!](https://iam-lab-analytics-summit.s3.amazonaws.com/nm_covid_data.html)
+
+
+### **Simulation....**
+
+
+```{r actuals-to-events, echo=TRUE}
+
+actuals_ds <- s3read_using(FUN=read.csv, object="s3://telehealth-scenario-modeling/simulation/hospitalizations/hospitalizations.csv",sep = ",",stringsAsFactors = F, header=T)
+
+actuals_ds <- actuals_ds %>% 
+  filter(!covid_cases == 0) %>% 
+  filter(!is.na(potential_telehealth))
+
+actuals_ds <- actuals_ds %>% 
+  mutate(date_reported = ymd(date_reported),
+        `Week#` = as.numeric(rownames(actuals_ds))) %>% 
+  select(10,2,3:9)
+
+des_times <- function(x, y){
+  times <- runif(x, min=y-1, max=y)
+  times_sorted <- t(t(sort(times)))
+  times_sorted
+  
+}
+
+
+patient_des <- function(actuals_ds){
+  datalist = list()
+  for (i in 1:nrow(actuals_ds)) {
+   datalist[[i]] <- des_times(actuals_ds$potential_telehealth[[i]], actuals_ds$`Week#`[[i]])
+
+  }
+  
+  arrivals <- do.call(rbind, lapply(datalist, data.frame))
+  names(arrivals)[1] <- "time"
+  return(arrivals)
+  
+}
+
+patient_arrivals <- patient_des(actuals_ds)
+
+patient_arrivals %>% 
+  head(150) 
+
+```
+
+
+```{r scenario-setup, echo=TRUE}
+
+# Lookup Tables
+# Patient Attributes
+patient_attributes <- s3read_using(FUN=read.csv, object="s3://telehealth-scenario-modeling/simulation/patient-attributes/patient_attributes.csv",sep = ",",stringsAsFactors = F, header=T)
+
+# EPA Smart City Location Attributes
+nm_epa <- s3read_using(FUN=read.csv, object="s3://telehealth-scenario-modeling/simulation/epa/epa.csv",sep = ",",stringsAsFactors = F, header=T)
+
+ages <- c(30:105)
+age <- function(){return(sample(ages, size=1, replace=F))}
+gender <- function(){return(sample.int(3,1, replace = F, c(.5,.45,.05)))}
+race <- function(){return(sample.int(5,1, replace=F, c(.4,.3,.15,.1,.05)))}
+internet_5G <- function(){return(sample(c(0,1), size=1, replace = T, c(.7,.3)))}
+
+# Simulation Parameters
+
+scheduling <- function() {.014}
+inpatient_cost <- function() {98336}
+telehealth_kit_cost <- function() {600}
+hospitalized <- function() {runif(1,7,14)}
+routing = function() {return(sample.int(2,1, replace = T, c(.3,.7)))}
+drone_flight_time_supply <- function(){runif(1,.3,1)}
+drone_loiter_time_5G <- function(){4}
+
+
+# Insurance
+insurance_policies <- c("Medicare/Medicaid","Medicaid:Blue Cross/Blue Shield","Medicaid:Centennial Care","Western Sky","Blue Cross/Blue Shield",
+"Centennial Care","Western Sky/Ambetter","Tricare","Friday Health Plans","Molina Healthcare","Presbyterian","True Health")
+
+insurance <- function(){return(sample.int(12,1, replace=FALSE))}
+
+
+behavior <- c("Church","Funeral","Wedding","Sporting Event","Other", "NA")
+patient_behavior <- function(){return(sample.int(6,1, replace=F, c(.1,.1,.1,.1,.1,.5)))}
+
+
+# Yes or No
+travel <- function(){return(sample.int(2,1, replace = F, c(.2,.8)))}
+
+travel_covid_hotspot <- function(){return(sample.int(2,1, replace = F, c(.5,.5)))}
+
+#travel_modes <- c("Train","Air","Car","Bus","Ship","NA")
+travel_mode <- function(){return(sample.int(6,1, replace=F, c(.1,.2,.4,.2,.05,.05)))}
+
+
+#Patient Attributes
+#Patient_Lat, Patient_Long, Closest_Hospital, Hospital_Lat, Hospital_Long, #Beds_Available
+
+patient <- function(){
+  patient_attributes %>% 
+  dplyr::select(Latitude, Longitude, Closest_Hospital, h_latitude, h_longitude, StaffedBeds) %>% 
+  slice_sample() %>% 
+  as.numeric()
+ 
+}
+
+# Smart City EPA Attributes
+# Road_Network_Density(D3a), Transit_Access(D4a), Walkability_Index
+epa <- function(){
+  nm_epa%>% 
+  dplyr::select(5:7) %>% 
+  slice_sample() %>% 
+  as.numeric()
+ 
+}
+
+#Scenario Hot Spots and Location Attributes
+hot_spots <- patient_attributes[c(5,6)]%>% 
+  unique() %>% 
+  slice_sample(n=6) 
+
+hot_spot <- function(){
+  hot_spots %>% 
+    slice_sample() %>% 
+    as.numeric()
+}
+
+
+```
+
+
+```{r simulation, echo=TRUE, eval=FALSE}
+
+set.seed(1997)
+
+# - param[["sim_time"]] number of weeks to run simulation corresponding to historical COVID-19 cases
+# - param[["supply_drones_n"]] is the number of sensor delivery drones in scenario
+# - param[["5G_drones_n"]] is the number of 5G internet support drones in scenario
+
+
+simulate <- function(param) {
+  
+  SIM_DF <- patient_arrivals %>% 
+    filter(time <=  param[["sim_time"]])
+
+  # Simulation Time: in weeks
+  SimTime = nrow(SIM_DF)
+  
+  env <- simmer("telehealth clinic")
+
+  beds <- paste0("bed", 1:37)
+  drones_supply <- paste0("drone_supply", 1:param[["supply_drones_n"]])
+  health_help_desks <- paste0("health_help_desk", 1:37)
+  no_internet_zones <- paste0("no_internet_zone", 1:42)
+  drones_5G <- paste0("drone_5G", 1:param[["5G_drones_n"]])
+
+  env %>% 
+  add_resource(health_help_desks, capacity = 3500, mon = TRUE) %>% 
+  add_resource(drones_supply, capacity = 10, mon = TRUE) %>% 
+  add_resource(beds, capacity = 150, mon = TRUE) %>% 
+  add_resource(no_internet_zones, capacity = 2500, mon = TRUE) %>% 
+  add_resource(drones_5G, capacity = 5000, mon = TRUE) 
+  
+  env %>% 
+  add_global("Total_Hospitalization_Cost", 0) %>% 
+  add_global("Telehealth_Cost", 0) 
+  
+  
+  bed.traj <- trajectory(name = "Inpatient-Monitoring", verbose= T)  %>%
+  timeout(scheduling) %>%
+  simmer::select(beds, "first-available") %>%
+  seize_selected(1) %>%
+  set_attribute("Inpatient_Cost", inpatient_cost) %>% 
+  set_global("Total_Hospitalization_Cost", mod="+", 98336) %>% 
+  timeout(hospitalized) %>%
+  release_selected(1) 
+  
+
+  drone.traj <- trajectory(name = "At-Home-Monitoring", verbose= T) %>%
+  timeout(scheduling) %>%
+  batch(n=5, timeout =1) %>% 
+  simmer::select(drones_supply, "first-available") %>%
+  seize_selected(1) %>% 
+  timeout(drone_flight_time_supply) %>%
+  release_selected(1) %>% 
+  simmer::separate() %>% 
+  set_attribute("Outpatient_Cost", telehealth_kit_cost) %>% 
+  set_global("Telehealth_Cost", mod="+", 600) %>%
+  branch(function(){get_attribute(env, "5G_Internet")},
+                continue = rep(FALSE,1),
+         trajectory() %>% 
+           simmer::select(no_internet_zones, "random") %>%
+           seize_selected(1) %>% 
+           timeout(drone_loiter_time_5G) %>%
+           release_selected(1)
+  )
+
+  patient.traj <- trajectory(name = "Patient-Path", verbose= T) %>% 
+  simmer::select(health_help_desks, "first-available") %>%
+  seize_selected(1) %>% 
+  timeout(scheduling) %>% 
+  set_attribute("Age", age) %>%
+  set_attribute("Gender", gender) %>%
+  set_attribute("5G_Internet", internet_5G) %>%
+  set_attribute("Patient_Behavior", patient_behavior) %>%
+  set_attribute("Insurance", insurance) %>%
+  set_attribute(c("Patient_Lat", "Patient_Long", "Closest_Hospital",
+                  "Hospital_Lat", "Hospital_Long", "#Beds_Available"), patient) %>%
+  set_attribute(c("Transportaton_Density",
+                  "Transportations_Access", "Walkability_Index"), epa) %>%
+  set_attribute("Behavior", patient_behavior) %>%
+  set_attribute("Travel", travel) %>%
+  set_attribute("COVID_Hotspot", travel_covid_hotspot) %>%
+  set_attribute("Travel_Mode", 
+                function()ifelse(get_attribute(env, "Travel") == 2,
+                                 travel_mode(),0)) %>%
+  release_selected(1) %>% 
+  set_attribute("Route", routing) %>%
+  branch(function(){get_attribute(env,"Route")}, 
+         continue = rep(FALSE,2),
+    bed.traj,
+    drone.traj
+  )
+  
+
+  env %>% 
+  add_dataframe('COVID_Patient_', trajectory=patient.traj, data=SIM_DF, mon = 2, col_time = "time", time = "absolute")
+  
+  env %>% 
+  run(until = SimTime) %>% 
+  wrap()
+}
+
+# grid of scenarios
+cases <- expand.grid(supply_drones_n = c(5,10,20), 
+                     sim_time = c(4,12,16), 
+                     `5G_drones_n` = c(1,2))
+
+# parallel simulation
+system.time({
+  envs <- parallel::mclapply(split(cases, 1:nrow(cases)), simulate,
+                             mc.cores=nrow(cases), mc.set.seed=FALSE)
+})
+
+
+```
+![Simulation Run Time - 1.4 Hours for ~2.4M Rows/250 Features](images/sim_run_time.png)
+
+<br>
+
+### Save Files to Google Drive
+
+#### Save files locally
+
+```{r save-csv, eval=FALSE, echo=TRUE}
+
+# Local
+
+save_csv <- function(envs){
+  arr_ds <- get_mon_arrivals(envs)
+  att_ds <- get_mon_attributes(envs)
+  res_ds <- get_mon_resources(envs)
+  
+  write_csv(arr_ds, here::here("data_out", paste0(format(Sys.time(), "%m%d%Y%H%M"),"_arr_ds.csv")))
+  write_csv(att_ds, here::here("data_out", paste0(format(Sys.time(), "%m%d%Y%H%M"),"_att_ds.csv")))
+  write_csv(res_ds, here::here("data_out", paste0(format(Sys.time(), "%m%d%Y%H%M"),"_res_ds.csv")))
+  
+}
+
+
+save_csv(envs)
+
+
+```
+
+  
+#### Google Drive Setup
+  
+```{r google-drive-setup, eval=FALSE, echo=TRUE}
+
+gdrive_scenario_data <- drive_find(pattern="scenario_data")
+
+saveRDS(gdrive_scenario_data, file = "gdrive.rds")
+
+```
+  
+  
+#### Check what's there. Upload new files
+  
+  
+```{r google-drive-upload, eval=FALSE, echo=TRUE}
+
+# Push to Google Drive
+
+gdrive <- readRDS(file = "gdrive.rds")
+
+drive_auth(email = "dixonrj@vcu.edu")
+
+data_files <- list.files(path = here("data_out"), full.names = TRUE, recursive = TRUE)
+
+gd <- gdrive$id
+
+
+compare_files <- function(gd){
+  gdrivefiles <- drive_ls(gd)
+  dfiles <-  list.files(path = here("data_out"), full.names = FALSE, recursive = TRUE)
+  gfiles <- as.vector(gdrivefiles$name)
+  g_upload <- setdiff(dfiles, gfiles)
+  return(g_upload)
+  
+}
+
+g_upload <- compare_files(gd)
+
+for (file in g_upload){
+drive_upload(paste0(here("data_out"), "/", file), path=gd)
+}
+
+
+```
+
+
+## Output Analysis and Data Visualization
+
+[Output Analysis and Data Visualization](https://iam-lab-analytics-summit.s3.amazonaws.com/irad_data_visualization.html)
+
+
+```{sh upload-website-dependencies, eval=FALSE}
+
+aws s3 cp /home/jdixon/telehealth_kit_simulation_5g_files s3://iam-lab-analytics-summit/telehealth_kit_simulation_5g_files/ --recursive | tee
+
+aws s3 cp /home/jdixon/images s3://iam-lab-analytics-summit/images/ --recursive | tee
+
+```
+
+```{sh upload-site-index-page, eval=FALSE}
+
+aws s3 cp /home/jdixon/telehealth_kit_simulation_5g.html s3://iam-lab-analytics-summit/telehealth_kit_simulation_5g.html | tee
+
+```

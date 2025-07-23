@@ -1,0 +1,349 @@
+---
+title: "Telehealth Simulation: Output Analysis and Visualization"
+format:
+  html:
+    toc: true
+    df-print: paged
+    fontsize: "11pt"
+    embed-resources: true
+knitr:
+  opts_chunk: 
+    echo: false
+    message: false
+    warning: false
+    out.width: "80%"
+    html-math-method: katex
+---
+
+```{r libraries-theme, include=FALSE, message=FALSE, warning=FALSE}
+
+library(tidyverse)
+library(here)
+library(data.table)
+library(simmer)
+library(simmer.bricks)
+library(simmer.plot)
+library(dplyr)
+library(lubridate)
+library(magrittr)
+library(tidyr)
+library(readr)
+library(aws.s3)
+library(aws.signature)
+library(stringr)
+library(tidyverse)
+library(ggplot2)
+library(viridis)
+library(hrbrthemes)
+library(here)
+
+```
+
+### Scenarios
+
+```{r}
+
+# Grid of scenarios
+cases <- expand.grid(supply_drones_n = c(1,5,10,20,30,90,120), 
+                     sim_time = c(12,16,32,52), 
+                     `5G_drones_n` = c(1,2))
+cases %>% 
+  DT::datatable()
+
+
+```
+
+<br>
+
+
+### Simulation Output
+ - 56 Scenarios = 56 Environments (nested list format)
+ 
+ ![Scenario Output](images/model_runs.png)
+
+<br>
+
+- **Each scenario exploded out contains event arrival time, resource metrics, and tracked data attributes**
+
+
+<br>
+
+![Scenario Output Exploded](images/model_run_exploded.png)
+
+<br>
+
+```{r load-simulation-output-data, warning=FALSE, message=FALSE}
+
+att_ds <- read_csv(here("data_out", "110120220246_att_ds.csv"))
+
+res_ds <- read_csv(here("data_out", "110120220246_res_ds.csv"))
+
+arr_ds <- read_csv(here("data_out", "110120220246_arr_ds.csv"))
+
+
+```
+
+
+### Key Performance Indicators (KPIs)
+ - Inpatient Cost vs Outpatient Cost
+ - Patients in service queue
+ - Hospital bed capacity
+ - 5G Drone Coverage
+
+
+```{r Total-Cost-By-Scenario, message=FALSE, warning=FALSE}
+
+costs <- att_ds %>% 
+  filter(key == "Total_Hospitalization_Cost"| key == "Telehealth_Cost") %>% 
+  group_by(replication, key) %>% 
+  summarize(Cost = max(value)) %>% 
+  pivot_wider(names_from = key, values_from = Cost) %>% 
+  ungroup() %>% 
+  rename(`Scenario#` = replication)
+
+cost_by_scenario <- cbind(cases,costs)
+
+total_cost_by_scenario <- cost_by_scenario %>% 
+  mutate(Total_Telehealth_Cost = (supply_drones_n + `5G_drones_n`) * 5000000 + Telehealth_Cost) %>% 
+  dplyr::select(4,2,1,3,6,7)
+
+total_cost_by_scenario %>% 
+  DT::datatable()
+
+```
+
+<br>
+
+### 2-3 Scenarios
+
+<br>
+
+#### Bar Chart
+```{r bar-chart}
+
+three_scenarios_bar <- total_cost_by_scenario %>% 
+  filter(sim_time == 32) %>% 
+  slice(10:12) %>% 
+  pivot_longer(5:6, names_to = "Category", values_to = "Cost") %>% 
+  mutate(Scenario = as.factor(`Scenario#`)) %>% 
+  group_by(Scenario, supply_drones_n) %>% 
+  ggplot(aes(fill=Category, y=Cost, x=`Scenario#`)) +
+  geom_bar(position="dodge", stat="identity") +
+    scale_fill_viridis(discrete = T) +
+    ggtitle("Outpatient vs Inpatient Costs",
+            subtitle = "(Over 32 Weeks)") +
+    theme_ipsum() +
+    labs(x = "Scenario") +
+  scale_y_continuous(labels=scales::dollar_format(scale = 1e-6, suffix = "M")) +
+  theme(plot.title=element_text(hjust=0.5)) +
+  theme(plot.subtitle=element_text(hjust=0.5)) +
+  theme(axis.title.x.bottom=element_text(hjust=0.5, size=12)) +
+  theme(axis.title.y.left=element_text(hjust=0.5, size=12))
+
+
+
+three_scenarios_bar
+
+```
+
+<br>
+
+#### Line Chart
+
+```{r line-chart}
+
+three_scenarios_line <- total_cost_by_scenario %>% 
+  filter(sim_time == 32) %>% 
+  slice(10:12) %>% 
+  pivot_longer(5:6, names_to = "Category", values_to = "Cost") %>% 
+  mutate(`Scenario#` = as.factor(`Scenario#`)) %>% 
+  group_by(`Scenario#`, supply_drones_n) %>% 
+  ggplot(aes(x=`Scenario#`, y=Cost, group=Category, shape=Category, colour=Category)) +
+  geom_line(aes(linetype=Category), size=1) +
+    geom_point(size=5) +
+    ggtitle("Outpatient vs Inpatient Costs",
+            subtitle = "(Over 32 Weeks)") +
+    theme_ipsum() +
+    labs(x = "Scenario") +
+  scale_y_continuous(labels=scales::dollar_format(scale = 1e-6, suffix = "M")) +
+  theme(plot.title=element_text(hjust=0.5)) +
+  theme(plot.subtitle=element_text(hjust=0.5)) +
+  theme(axis.title.x.bottom=element_text(hjust=0.5, size=12)) +
+  theme(axis.title.y.left=element_text(hjust=0.5, size=12))
+
+three_scenarios_line
+
+
+```
+
+<br>
+
+### 4-16 Scenarios - Facet Grid
+
+```{r facet-grid}
+
+nine_scenarios_facet_grid <- total_cost_by_scenario %>% 
+  filter(sim_time == 32) %>% 
+  slice_sample(n=9) %>% 
+  pivot_longer(5:6, names_to = "Category", values_to = "Cost") %>% 
+  group_by(`Scenario#`, supply_drones_n) %>% 
+  ggplot(aes(fill=Category, y=Cost, x=`Scenario#`)) +
+  geom_bar(position="dodge", stat="identity") +
+  facet_wrap(~`Scenario#`) +
+  scale_fill_viridis(discrete = T) +
+  ggtitle("Outpatient vs Inpatient Costs",
+            subtitle = "(Over 32 Weeks)") +
+    theme_ipsum() +
+    labs(x = "Scenario") +
+  scale_y_continuous(labels=scales::dollar_format(scale = 1e-6, suffix = "M")) +
+  theme(plot.title=element_text(hjust=0.5)) +
+  theme(plot.subtitle=element_text(hjust=0.5)) +
+  theme(axis.title.x.bottom=element_text(hjust=0.5, size=12)) +
+  theme(axis.title.y.left=element_text(hjust=0.5, size=12)) +
+  theme(axis.text.y.left=element_text(hjust=0.5, size=7)) 
+
+
+
+nine_scenarios_facet_grid
+
+
+```
+
+<br>
+
+### KPIs. Patient Backlog and Hospital Bed Capacity.
+
+```{r resource-capacity-patient-queues, message=FALSE, warning=FALSE}
+
+patients <- att_ds %>%
+  group_by(replication, name) %>%
+  left_join(rowid_to_column(cases, "replication"))
+
+
+patient_queues <- res_ds %>%
+  filter(queue > 0) %>% 
+  group_by(replication, resource) %>%
+  summarize(Queue = max(queue)) %>% 
+  left_join(rowid_to_column(cases, "replication")) %>% 
+  arrange(Queue) %>% 
+  ungroup() %>% 
+  rename(`Scenario#` = replication)
+
+hospital_bed_queue <- patient_queues %>% 
+   filter(grepl("bed", resource)) 
+
+supply_drone_queue <- patient_queues %>% 
+   filter(grepl("drone_supply", resource)) 
+
+patient_queues %>% 
+  DT::datatable()
+
+```
+
+
+### +16 Scenarios - Box Plots
+
+<br>
+
+#### Drone Delivery Backlog
+```{r box-plot-drone-delivery-backlog}
+
+bp.vals <- function(x, probs=c(0.05, 0.25, 0.5, 0.75, 0.95)) {
+  r <- quantile(x, probs=probs, na.rm=TRUE)
+  names(r) <- c("ymin", "lower", "middle", "upper", "ymax")
+  r
+}
+
+patient_queues %>%
+  # plot
+  ggplot(aes(factor(`supply_drones_n`), Queue, color=factor(sim_time))) +
+  stat_summary(fun.data=bp.vals, geom="boxplot", position="dodge") +
+  theme_bw() + theme(legend.justification=c(0, 1), legend.position=c(.6, .98)) +
+  labs(y="Patient Backlog - Delayed Deliveries", x="No. of Drones Delivering Telehealth Monitoring Kits", color="Simulation Time in Weeks")
+
+
+```
+
+<br>
+
+#### Hospital Bed Capacity
+
+
+```{r box-plot-hospital-bed-capacity}
+
+bp.vals <- function(x, probs=c(0.05, 0.25, 0.5, 0.75, 0.95)) {
+  r <- quantile(x, probs=probs, na.rm=TRUE)
+  names(r) <- c("ymin", "lower", "middle", "upper", "ymax")
+  r
+}
+
+hospital_bed_queue %>%
+  # plot
+  ggplot(aes(factor(`supply_drones_n`), Queue, color=factor(sim_time))) +
+  stat_summary(fun.data=bp.vals, geom="boxplot", position="dodge") +
+  theme_bw() +
+  theme(legend.justification=c(0, 1), legend.position=c(.6, .98)) +
+  labs(y="Hospital Bed Backlog - Above Capacity", x="No. of Drones Delivering Telehealth Monitoring Kits", color="Simulation Time in Weeks")
+
+
+```
+
+
+<br>
+
+### High Dimensional Data
+
+```{r scenario-attributes, warning=FALSE, message=FALSE}
+
+high_dimensions_ds <- att_ds %>% 
+  dplyr::select(5,3,4) %>% 
+  rename(Scenario = replication) %>% 
+  filter(!grepl("Cost", key)) %>% 
+  filter(Scenario >= 40) %>% 
+  group_by(Scenario, key) %>% 
+  summarize(value =  mean(value)) %>% 
+  pivot_wider(names_from = key, values_from = value)
+
+
+high_dimensions_ds %>% 
+  DT::datatable()
+
+```
+
+<br>
+
+### Dendrogram Heatmap for High Dimensional Features
+
+```{r heatmap-dendrogram, message=FALSE, echo=TRUE, warning=FALSE}
+
+library(pheatmap) ## for heatmap generation
+library(tidyverse) ## for data wrangling
+library(ggplotify) ## to convert pheatmap to ggplot2
+library(heatmaply) ## for constructing interactive heatmap
+
+
+high_dim <- as.ggplot(pheatmap(high_dimensions_ds, scale = "column"))
+
+```
+<br>
+
+<hr >
+
+[Back to Main Page](https://iam-lab-analytics-summit.s3.amazonaws.com/telehealth_kit_simulation_5g.html)
+
+
+```{sh upload-website-dependencies, eval=FALSE}
+
+aws s3 cp /home/jdixon/irad_data_visualization_files s3://iam-lab-analytics-summit/irad_data_visualization_files/ --recursive | tee
+
+aws s3 cp /home/jdixon/images s3://iam-lab-analytics-summit/images/ --recursive | tee
+
+```
+
+```{sh upload-site-index-page, eval=FALSE}
+
+aws s3 cp /home/jdixon/irad_data_visualization.html s3://iam-lab-analytics-summit/irad_data_visualization.html | tee
+
+```
+
+

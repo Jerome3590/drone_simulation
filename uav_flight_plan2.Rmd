@@ -1,0 +1,97 @@
+---
+title: "UAV Flight Plan"
+author: "Jerome Dixon"
+date: "2022-09-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries}
+
+library(readr)
+library(here)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(magrittr)
+library(stringi)
+library(ggplot2)
+library(ggimage)
+library(jechaveR)
+library(gganimate)
+library(kableExtra)
+library(zipcodeR)
+library(data.table)
+library(igraph)
+library(sf)
+library(tmap)
+library(leaflet)
+
+
+use_credentials(
+profile = Sys.getenv("AWS_PROFILE", "cana1"),
+file = Sys.getenv("AWS_SHARED_CREDENTIALS_FILE", default_credentials_file())
+)
+
+
+```
+
+### New Mexico Shapefile
+
+```{r hospitalization-spatial-dataset}
+
+us_zcta = read_sf(here("data","shapefiles","tl_2019_us_zcta510.shp"))
+
+us_covid_community_levels_by_county <- read_csv(here("data","forecasts","United_States_COVID-19_Community_Levels_by_County.csv"))
+
+
+nm_covid_level_by_county <- us_covid_community_levels_by_county %>% 
+  filter(state == "New Mexico") %>% 
+  mutate(Date_Updated = mdy(date_updated)) %>% 
+  select(!date_updated) %>% 
+  filter(Date_Updated == max(Date_Updated))
+
+zip_plus_four <- fread(here("data","zip_codes","nm.txt"))
+
+zip_plus_four <- zip_plus_four %>% 
+  select(8,9,1,2,28) %>% 
+  unite("Address", 1:4, remove= FALSE, sep = ' ') %>% 
+  unite("Zip+4", 4:5, remove= FALSE, sep = '.') %>% 
+  select(4,1,7,5)
+
+
+nm_hospitalizations <- zip_plus_four %>% 
+  left_join(.,
+            nm_covid_level_by_county,
+            by=c('CountyFIPS' = 'county_fips')) %>% 
+  mutate(hospitalizations = county_population / 100000 * .[[12]]) %>% 
+  mutate(ZIPCode = as.character(ZIPCode)) %>% 
+  left_join(.,
+            us_zcta,
+            by=c('ZIPCode' = 'GEOID10'))
+
+```
+
+
+```{r drone-routes}
+
+
+
+```
+
+
+
+```{r visualization}
+
+nm_hospitalizations %>% 
+  ggplot() +
+  geom_sf() +
+  geom_sf(color="blue", linetype="dashed") +    # make the border of nm dashed
+  geom_sf(aes(fill = nm_hospitalizations$hospitalizations[[1:25, ]])) +
+  scale_fill_continuous(low="#D2E9FF", high="#003D79")
+
+```
+
