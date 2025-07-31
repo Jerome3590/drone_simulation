@@ -177,7 +177,7 @@ The simulation is highly parametric and can be adapted for:
 
 ## Contributors
 
-This project appears to be developed as part of healthcare innovation research, combining simulation modeling, geospatial analysis, and healthcare economics to address real-world challenges in medical service delivery.
+Side project developed to show the utility of drones for telehealth. Combines simulation modeling, geospatial analysis, and healthcare economics to address real-world challenges in medical service delivery.
 
 ## License
 
